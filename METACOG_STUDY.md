@@ -62,6 +62,8 @@ npm start
 
 Open `http://localhost:3000/` (or `/?PROLIFIC_PID=test1`, `/?sona_id=test1`). Without an ID, a random local ID is kept in the browser, so reuse an incognito window to see a new assignment. To preview one cell, start with e.g. `ARMS=ai_metacog npm start`.
 
+**Developer mode.** Set `DEV_KEY` on the server, then open `/?dev=<DEV_KEY>` to get a panel that lets you choose the cell and optionally skip consent, welcome and pretest. Dev sessions get a fresh ID on every load, are not stored as assignments (so they never affect balancing), and every trial carries `dev_mode: true` and `recruitment_source: 'dev'`. Without a valid key the panel never appears.
+
 **Data.** MongoDB collections: `entries` (one document per completed session, same format as Grace's: `data.trials[]`), `trials` (one document per finished trial, including dropouts), `assignments` (participant key → cell, number of starts). Puzzle trials have `stimulus_type: 'fractions_puzzle'`; every trial carries `cell`, `no_ai_condition`, `metacog_condition`, `recruitment_source`, `participant_key`, `start_number`.
 
 ## 4. Deploying and recruiting

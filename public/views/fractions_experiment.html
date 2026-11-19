@@ -325,7 +325,8 @@
   var urlParams = new URLSearchParams(window.location.search);
   var PROLIFIC_PID = urlParams.get('PROLIFIC_PID');
   var SONA_ID = urlParams.get('sona_id');
-  var recruitmentSource = PROLIFIC_PID ? 'prolific' : (SONA_ID ? 'sona' : 'direct');
+  var DEV_KEY_PARAM = urlParams.get('dev');
+  var recruitmentSource = DEV_KEY_PARAM ? 'dev' : (PROLIFIC_PID ? 'prolific' : (SONA_ID ? 'sona' : 'direct'));
   var localId = null;
   if (recruitmentSource === 'direct') {
     try { localId = localStorage.getItem('metacog_local_id'); } catch (_) {}
@@ -334,7 +335,8 @@
       try { localStorage.setItem('metacog_local_id', localId); } catch (_) {}
     }
   }
-  var participantKey = PROLIFIC_PID ? 'prolific:' + PROLIFIC_PID : (SONA_ID ? 'sona:' + SONA_ID : 'direct:' + localId);
+  var participantKey = DEV_KEY_PARAM ? 'dev:' + Math.random().toString(36).slice(2, 10)
+    : PROLIFIC_PID ? 'prolific:' + PROLIFIC_PID : (SONA_ID ? 'sona:' + SONA_ID : 'direct:' + localId);
   var sessionKey = Math.random().toString(36).slice(2, 12); // one page load
 
   // Set by /assign before the experiment starts
@@ -1259,6 +1261,8 @@
     });
   });
 
+  var mainTimelineStart = timeline.length; // dev mode can start here (skips consent, welcome, pretest)
+
   /* ---------- CONDITION-SPECIFIC INSTRUCTION SCREEN ---------- */
   timeline.push({
     conditional_function: function(){ return participantNoAI === true; },
@@ -1427,7 +1431,7 @@
   });
 
   /* ---------- ASSIGN, THEN RUN ---------- */
-  function startExperiment(a){
+  function startExperiment(a, skipIntro){
     participantNoAI = !!a.no_ai_condition;
     metacogOn = !!a.metacog;
     assignedCell = a.cell;
@@ -1437,6 +1441,7 @@
       cell: assignedCell,
       assignment_fallback: !!a.assignment_fallback,
       start_number: a.starts,                    // >1 means the participant reloaded / restarted
+      dev_mode: !!a.dev_mode,                    // researcher test session: exclude from analysis
       participant_key: participantKey,
       session_key: sessionKey,
       recruitment_source: recruitmentSource,
@@ -1449,9 +1454,38 @@
       user_agent: navigator.userAgent,
       screen_w: window.screen.width, screen_h: window.screen.height
     });
-    jsPsych.run(timeline);
+    jsPsych.run(skipIntro ? timeline.slice(mainTimelineStart) : timeline);
   }
-  fetch('/assign', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+
+  /* ---------- DEVELOPER PANEL (only with ?dev=<DEV_KEY>) ---------- */
+  function showDevPanel(cells){
+    var target = document.getElementById('jspsych_target');
+    var labels = { ai: 'AI, no message', ai_metacog: 'AI + message', control: 'Control, no message', control_metacog: 'Control + message' };
+    target.innerHTML = '<div style="max-width:520px;margin:80px auto;padding:24px 28px;border:2px dashed #c00;border-radius:10px;text-align:left;font-family:sans-serif;">' +
+      '<h2 style="margin-top:0;color:#c00;">Developer mode</h2>' +
+      '<p style="font-size:15px;color:#444;">Pick a condition. This session is marked <code>dev_mode</code> and does not count toward balancing.</p>' +
+      cells.map(function(c){ return '<button type="button" class="jspsych-btn dev-cell" data-cell="' + c + '" style="display:block;width:100%;margin:8px 0;text-align:left;">' + (labels[c] || c) + ' <span style="color:#888">(' + c + ')</span></button>'; }).join('') +
+      '<label style="display:block;margin-top:14px;font-size:15px;"><input type="checkbox" id="devSkipIntro" checked> Skip consent, welcome and pretest</label></div>';
+    target.querySelectorAll('.dev-cell').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var skip = document.getElementById('devSkipIntro').checked;
+        fetch('/assign', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                           body: JSON.stringify({ dev_key: DEV_KEY_PARAM, force_cell: btn.dataset.cell }) })
+          .then(function(r){ if (!r.ok) throw new Error('denied'); return r.json(); })
+          .then(function(a){ target.innerHTML = ''; startExperiment(a, skip); })
+          .catch(function(){ target.innerHTML = '<p style="margin-top:80px;">Developer mode is not available.</p>'; });
+      });
+    });
+  }
+
+  if (DEV_KEY_PARAM) {
+    fetch('/dev-check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dev_key: DEV_KEY_PARAM }) })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (d.ok) showDevPanel(d.cells);
+        else document.getElementById('jspsych_target').innerHTML = '<p style="margin-top:80px;">This link is not valid.</p>';
+      });
+  } else fetch('/assign', { method: 'POST', headers: { 'Content-Type': 'application/json' },
                      body: JSON.stringify({ participant_key: participantKey, source: recruitmentSource }) })
     .then(function(r){ return r.json(); })
     .then(startExperiment)

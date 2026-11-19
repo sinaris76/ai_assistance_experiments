@@ -110,9 +110,21 @@ function pickCell(counts) {
   return candidates[Math.floor(Math.random() * candidates.length)];
 }
 
+// Developer mode: ?dev=<DEV_KEY> lets the researcher pick a cell. Requires DEV_KEY to be set on
+// the server; dev sessions are never stored as assignments, so they do not affect balancing.
+const DEV_KEY = process.env.DEV_KEY || '';
+app.post('/dev-check', function(req, res) {
+  const ok = !!DEV_KEY && (req.body || {}).dev_key === DEV_KEY;
+  res.status(ok ? 200 : 403).json({ ok, cells: ok ? Object.keys(ALL_CELLS) : [] });
+});
+
 let assignLock = Promise.resolve();
 app.post('/assign', function(req, res) {
-  const { participant_key, source } = req.body || {};
+  const { participant_key, source, dev_key, force_cell } = req.body || {};
+  if (force_cell !== undefined) {
+    if (!DEV_KEY || dev_key !== DEV_KEY || !ALL_CELLS[force_cell]) return res.status(403).json({ error: 'dev mode not allowed' });
+    return res.json(Object.assign({}, ALL_CELLS[force_cell], { starts: 1, dev_mode: true }));
+  }
   if (!participant_key) return res.status(400).json({ error: 'participant_key required' });
   // serialise assignments so two simultaneous arrivals cannot both see the same counts
   assignLock = assignLock.then(async () => {
