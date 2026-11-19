@@ -48,6 +48,7 @@ The Start button unlocks after 2.5 s so the card cannot be clicked through unrea
 | "Your payment **or course credit** does NOT depend…" | SONA participants are paid in credit. |
 | UCI consent and debrief | Templates with `[BRACKETED]` fields to replace with the IRB-approved text. |
 | `plugin-survey-html-form` pinned to `@1.0.3` | The unpinned unpkg URL now resolves to v2.x, which targets jsPsych 8, not the 7.3.2 the page loads. |
+| Chat model `gpt-5.6-sol` instead of `gpt-5-chat-latest` | OpenAI shut down `gpt-5-chat-latest` (and every other `*-chat-latest` model) and lists `gpt-5.6-sol` as the replacement. Grace's AI arm therefore cannot be reproduced exactly; report this as a deviation. Set `OPENAI_MODEL` to change it. |
 | Save retries; failure goes to the finish page instead of restarting the study at `/` | The original sent a participant back to the consent page on a failed save. |
 | Prolific / SONA redirects on the finish page | §4. |
 

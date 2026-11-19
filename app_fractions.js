@@ -223,7 +223,7 @@ app.post('/chat', async (req, res) => {
     ];
 
     const response = await axios.post('https://api.openai.com/v1/chat/completions', {
-      model: process.env.OPENAI_MODEL || "gpt-5-chat-latest",
+      model: process.env.OPENAI_MODEL || "gpt-5.6-sol",
       messages: messages,
     }, {
       headers: {
