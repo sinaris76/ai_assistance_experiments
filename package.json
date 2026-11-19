@@ -2,12 +2,12 @@
   "name": "climate-research-experiment",
   "version": "1.0.0",
   "description": "Climate perception research experiment with AI chat support",
-  "main": "app_reading.js",
+  "main": "app_fractions.js",
   "scripts": {
-    "start": "node app_reading.js",
+    "start": "node app_fractions.js",
     "start:reading": "node app_reading.js",
     "start:fractions": "node app_fractions.js",
-    "dev": "nodemon app_reading.js",
+    "dev": "nodemon app_fractions.js",
     "dev:fractions": "nodemon app_fractions.js"
   },
   "dependencies": {
@@ -20,5 +20,8 @@
   },
   "devDependencies": {
     "nodemon": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }

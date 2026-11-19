@@ -163,7 +163,8 @@ class ChatWidget {
         body: JSON.stringify({
           message,
           conversationHistory: this.conversationHistory,
-          puzzleContext: (typeof window.getReadingChatContext === 'function') ? window.getReadingChatContext() : null
+          puzzleContext: (typeof window.getPuzzleChatContext === 'function') ? window.getPuzzleChatContext()
+            : (typeof window.getReadingChatContext === 'function') ? window.getReadingChatContext() : null
         }),
       });
 

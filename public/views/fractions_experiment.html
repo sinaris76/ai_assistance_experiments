@@ -7,8 +7,9 @@
   <script src="https://unpkg.com/jspsych@7.3.2"></script>
   <script src="https://unpkg.com/@jspsych/plugin-instructions@1.1.2"></script>
   <script src="https://unpkg.com/@jspsych/plugin-survey-multi-choice@1.1.2"></script>
-  <script src="https://unpkg.com/@jspsych/plugin-survey-html-form"></script>
+  <script src="https://unpkg.com/@jspsych/plugin-survey-html-form@1.0.3"></script>
   <script src="https://unpkg.com/@jspsych/plugin-survey-likert@1.1.2"></script>
+  <script>window.STUDY_CONFIG = <%- studyConfig %>;</script>
   <link href="https://unpkg.com/jspsych@7.3.2/css/jspsych.css" rel="stylesheet" />
   <link href="../css/experiment.css" rel="stylesheet" />
   <link href="../css/chat.css" rel="stylesheet" />
@@ -22,7 +23,8 @@
         processEscapes: true
       },
       options: {
-        skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre']
+        skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'],
+        enableMenu: false
       }
     };
   </script>
@@ -230,6 +232,22 @@
       font-size: 16px;
     }
 
+    /* Metacognitive message / start screen overlay */
+    .metacog-overlay {
+      position: fixed; inset: 0; z-index: 10000;
+      background: #ffffff;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .metacog-card {
+      max-width: 620px; background: #fff; border: 2px solid #2E86AB; border-radius: 12px;
+      padding: 32px 36px; box-shadow: 0 4px 24px rgba(0,0,0,0.12); text-align: left;
+    }
+    .metacog-card h2 { margin: 0 0 14px 0; color: #2E86AB; font-size: 24px; }
+    .metacog-card p { font-size: 20px; line-height: 1.6; color: #222; margin: 0 0 24px 0; }
+    .metacog-card .metacog-start { display: block; margin: 0 auto; font-size: 18px; padding: 10px 28px; }
+    .metacog-card .metacog-start:disabled { opacity: 0.45; cursor: default; }
+    .no-select, .no-select * { -webkit-user-select: none; user-select: none; }
+
     /* Progress bar styles */
     .progress-container {
       width: 100%;
@@ -302,8 +320,45 @@
   };
 
 
+  /* ---------- STUDY CONFIG, PARTICIPANT IDS, RECRUITMENT SOURCE ---------- */
+  var CFG = window.STUDY_CONFIG || {};
+  var urlParams = new URLSearchParams(window.location.search);
+  var PROLIFIC_PID = urlParams.get('PROLIFIC_PID');
+  var SONA_ID = urlParams.get('sona_id');
+  var recruitmentSource = PROLIFIC_PID ? 'prolific' : (SONA_ID ? 'sona' : 'direct');
+  var localId = null;
+  if (recruitmentSource === 'direct') {
+    try { localId = localStorage.getItem('metacog_local_id'); } catch (_) {}
+    if (!localId) {
+      localId = 'local_' + Math.random().toString(36).slice(2, 12);
+      try { localStorage.setItem('metacog_local_id', localId); } catch (_) {}
+    }
+  }
+  var participantKey = PROLIFIC_PID ? 'prolific:' + PROLIFIC_PID : (SONA_ID ? 'sona:' + SONA_ID : 'direct:' + localId);
+  var sessionKey = Math.random().toString(36).slice(2, 12); // one page load
+
+  // Set by /assign before the experiment starts
+  var participantNoAI = null;   // true = control (hints panel), false = AI (ChatGPT panel)
+  var metacogOn = false;        // true = metacognitive message before each problem
+  var assignedCell = null;
+
+  function finishUrl() {
+    var q = 'source=' + encodeURIComponent(recruitmentSource);
+    if (SONA_ID) q += '&sona_id=' + encodeURIComponent(SONA_ID);
+    return 'finish?' + q;
+  }
+
+  // Per-trial backup so partial sessions (dropouts) are not lost
+  function postTrial(trialData) {
+    try {
+      var body = JSON.stringify({ participant_key: participantKey, session_key: sessionKey, trial: trialData });
+      fetch('/trial-data', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body, keepalive: body.length < 60000 });
+    } catch (_) {}
+  }
+
   var jsPsych = initJsPsych({
     display_element: $('#jspsych_target')[0],
+    on_trial_finish: function(d){ postTrial(d); },  // runs after each trial's own on_finish
     on_finish: function(){
       var allData = jsPsych.data.get();
       allData.values().forEach(function(trial){
@@ -313,21 +368,91 @@
           trial.chat_logs = allPuzzleChatLogs[puzzleId] || [];
         }
       });
-      $.ajax({ type:"POST", url:"/experiment-data", data:JSON.stringify(allData), contentType:"application/json"})
-      .done(()=>{ window.location.href = "finish"; })
-      .fail(()=>{ alert("Error saving data"); window.location.href="/"; });
+      var payload = JSON.stringify(allData);
+      var send = function(attempt){
+        $.ajax({ type:"POST", url:"/experiment-data", data:payload, contentType:"application/json"})
+        .done(()=>{ window.location.href = finishUrl(); })
+        .fail(()=>{
+          if (attempt < 3) { setTimeout(()=>send(attempt + 1), 1500); }
+          // trials were already saved one by one, so still send the participant to the finish page
+          else { window.location.href = finishUrl(); }
+        });
+      };
+      send(1);
     }
   });
 
-  // Randomly assign 50% of participants to a no-assistant condition on each page load
-  const participantNoAI = Math.random() < 0.5;
-  // Attach condition to all jsPsych data
-  jsPsych.data.addProperties({ no_ai_condition: participantNoAI });
+  /* ---------- INTEGRITY LOGGING (tab switches, copy/paste) ---------- */
+  // Counters are reset at the start of every puzzle and saved with that puzzle's data.
+  var integrity = { blur_count: 0, hidden_count: 0, hidden_ms: 0, hiddenSince: null,
+                    copy_attempts: 0, paste_attempts: 0, contextmenu_attempts: 0 };
+  var onPuzzlePage = false;
+  function resetIntegrity(){
+    integrity.blur_count = 0; integrity.hidden_count = 0; integrity.hidden_ms = 0;
+    integrity.hiddenSince = document.hidden ? Date.now() : null;
+    integrity.copy_attempts = 0; integrity.paste_attempts = 0; integrity.contextmenu_attempts = 0;
+  }
+  function snapshotIntegrity(){
+    var extra = integrity.hiddenSince ? (Date.now() - integrity.hiddenSince) : 0;
+    return { blur_count: integrity.blur_count, hidden_count: integrity.hidden_count,
+             hidden_ms: integrity.hidden_ms + extra, copy_attempts: integrity.copy_attempts,
+             paste_attempts: integrity.paste_attempts, contextmenu_attempts: integrity.contextmenu_attempts };
+  }
+  document.addEventListener('visibilitychange', function(){
+    if (!onPuzzlePage) return;
+    if (document.hidden) { integrity.hidden_count++; integrity.hiddenSince = Date.now(); }
+    else if (integrity.hiddenSince) { integrity.hidden_ms += Date.now() - integrity.hiddenSince; integrity.hiddenSince = null; }
+  });
+  window.addEventListener('blur', function(){ if (onPuzzlePage) integrity.blur_count++; });
+  ['copy','cut'].forEach(function(evt){
+    document.addEventListener(evt, function(e){
+      if (!onPuzzlePage) return;
+      integrity.copy_attempts++;
+      if (CFG.block_copy_paste) e.preventDefault();
+    });
+  });
+  document.addEventListener('paste', function(e){
+    if (!onPuzzlePage) return;
+    integrity.paste_attempts++;
+    if (CFG.block_copy_paste) e.preventDefault();
+  });
+  document.addEventListener('contextmenu', function(e){
+    if (!onPuzzlePage) return;
+    integrity.contextmenu_attempts++;
+    if (CFG.block_copy_paste) e.preventDefault();
+  });
+
+  /* ---------- METACOGNITIVE MESSAGE (or neutral start screen) ---------- */
+  var metacogShownThisPuzzle = false, metacogViewMs = null, startScreenShownThisPuzzle = false;
+  function escapeHtml(t){ var d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+  function showStartOverlay(isMetacog, onDone){
+    var shownAt = Date.now();
+    var overlay = document.createElement('div');
+    overlay.className = 'metacog-overlay';
+    overlay.id = 'metacogOverlay';
+    var inner = isMetacog
+      ? '<h2>' + escapeHtml(CFG.metacog_title) + '</h2><p>' + escapeHtml(CFG.metacog_text) + '</p>'
+      : '<p style="text-align:center;">Press Start when you are ready for the next problem.</p>';
+    overlay.innerHTML = '<div class="metacog-card">' + inner +
+      '<button type="button" class="jspsych-btn metacog-start" disabled>Start problem</button></div>';
+    document.body.appendChild(overlay);
+    var btn = overlay.querySelector('.metacog-start');
+    var minMs = isMetacog ? (CFG.metacog_min_ms || 0) : 0;
+    setTimeout(function(){ btn.disabled = false; btn.focus(); }, minMs);
+    btn.addEventListener('click', function(){
+      var viewed = Date.now() - shownAt;
+      overlay.remove();
+      onDone(viewed);
+      var ai = document.getElementById('answer-input');
+      if (ai) ai.focus();
+    });
+  }
 
   var timeline = [];
 
   /* ---------- CONSENT ---------- */
-    var consentPage = '<div style="width:1060px;" align="left"> <p><h1>University of California, Los Angeles</h1></p>\n\n<p><h2>RESEARCH INFORMATION SHEET</h2></p>\n\n<p><h3>Fractions Problem Solving Study</h3></p>\n\n<p><b>INTRODUCTION</b></p>\n\n<p>Professor Rachit Dubey from the Department Communication at the University of California, Los Angeles are conducting a research study. You were selected as a possible participant in this study because you are 18 years of age or older, fluent in English, and are based in the US. Your participation in this research study is voluntary.</p>\n\n<p><b>WHAT SHOULD I KNOW ABOUT A RESEARCH STUDY?</b></p>\n\n<ul>\n<li>Someone will explain this research study to you.</li>\n<li>Whether or not you take part is up to you.</li>\n<li>You can choose not to take part.</li>\n<li>You can agree to take part and later change your mind.</li>\n<li>Your decision will not be held against you.</li>\n<li>You can ask all the questions you want before you decide.</li>\n</ul>\n\n<p><b>WHY IS THIS RESEARCH BEING DONE?</b></p>\n\n<p>The purpose of this study is to better understand how people solve problems. The findings may help us gain insight into human cognition and behavior.</p>\n\n<p><b>HOW LONG WILL THE RESEARCH LAST AND WHAT WILL I NEED TO DO?</b></p>\n\n<p>Participation will take a total of about 10-15 minutes.</p>\n\n<p>If you volunteer to participate in this study, the researcher will ask you to do the following:</p>\n\n<ul>\n<li>You will read some instructions and solve fractions problems on a computer.</li>\n<li>You will be asked to solve both direct fractions calculations and word problems involving fractions.</li>\n<li>You will also be asked to answer brief questions about your experience and opinions regarding the tasks.</li>\n</ul>\n\n<p><b>ARE THERE ANY RISKS IF I PARTICIPATE?</b></p>\n\n<p>There are minimal risks including potential mild frustration from difficult problems and brief cognitive fatigue from problem-solving. These risks are no greater than those encountered in recreational puzzle activity. You may withdraw from the research study at any time without penalty. For scientific reasons, this consent form does not include information about the study hypotheses and the research questions being tested. You will be fully debriefed following your participation in the research.</p>\n\n<p><b>ARE THERE ANY BENEFITS IF I PARTICIPATE?</b></p>\n\n<p>There are no direct benefits to you as a participant. The findings from this study may help researchers better understand human problem-solving and cognition, which could contribute to improved educational methods and cognitive training programs.</p>\n\n<p><b>COMPENSATION</b></p>\n\n<p>You will receive compensation as stated in the study posting. If you withdraw from the study prior to its completion, you will be compensated for the portion of the study that you completed.</p>\n\n<p><b>CONFIDENTIALITY</b></p>\n\n<p>We will not be asking for any personally identifying information, and we will handle responses as confidentially as possible. However, we cannot guarantee the confidentiality of information transmitted over the Internet. To minimize this risk, data will be encrypted on transfer and storage and will only be accessible to qualified lab personnel. This anonymized data may be shared with the scientific community.</p>\n\n<p><b>WHO CAN I CONTACT IF I HAVE QUESTIONS ABOUT THIS STUDY?</b></p>\n\n<p><b>Research Team:</b><br>\nProfessor Rachit Dubey<br>\nEmail: rdubey@ucla.edu</p>\n\n<p><b>UCLA Office of the Human Research Protection Program (OHRPP):</b><br>\nIf you have questions about your rights as a research subject, or you have concerns or suggestions and you want to talk to someone other than the researchers, you may contact the UCLA OHRPP by phone: (310) 206-2040; by email: participants@research.ucla.edu or by mail: Box 951406, Los Angeles, CA 90095-1406.</p>\n\n<p><b>CONSENT</b></p>\n\n<p>I understand the information presented above. I have been given an opportunity to ask questions and all of my questions have been answered to my satisfaction.</p>\n\n<ul>\n<li>My participation is voluntary, and I may withdraw my consent and discontinue participation at any time without penalty.</li>\n<li>I do not waive any legal rights or release the University of California, Los Angeles, its agents, or the researchers from liability for negligence.</li>\n</ul>\n\n<p>By clicking below, I hereby give my consent to participate in this research.</p>\n\n</div>';
+    // UCI study information sheet. Every [BRACKETED] field must be replaced with the text approved by the UCI IRB.
+    var consentPage = '<div style="width:1060px;" align="left"> <p><h1>University of California, Irvine</h1></p><p><h2>STUDY INFORMATION SHEET</h2></p><p><h3>Fractions Problem Solving Study</h3></p><p><b>Lead Researcher:</b> Sina Rismanchian, Ph.D. Candidate, School of Education, srismanc@uci.edu<br><b>Faculty Sponsor:</b> Professor Shayan Doroudi, School of Education, [FACULTY EMAIL]</p><p><b>IRB #:</b> [UCI IRB PROTOCOL NUMBER]</p><ul><li>You are being asked to participate in a research study about how people solve problems. You must be 18 years of age or older to participate.</li><li>Participation will take about 10 to 15 minutes. You will read some instructions, solve fractions problems on a computer, and answer a few brief questions about your experience.</li><li>Some problems may be difficult, which may cause mild frustration or fatigue. These risks are no greater than those of a recreational puzzle activity.</li><li>There are no direct benefits to you. The findings may help researchers understand human problem solving and improve educational tools.</li><li>Compensation: you will receive the payment (Prolific) or course credit (UCI SONA) stated in the study posting. Your compensation does not depend on how many problems you answer correctly. [CONFIRM WITHDRAWAL / PARTIAL COMPENSATION POLICY WITH IRB]</li><li>We will not ask for your name or other directly identifying information. Your Prolific or SONA ID is recorded only to grant compensation and is removed from the research data. Data are stored on encrypted, access-restricted servers. De-identified data may be shared with other researchers.</li><li>For scientific reasons, this sheet does not describe the study hypotheses. You will be fully debriefed at the end.</li><li>Participation is voluntary. You may stop at any time by closing this window.</li></ul><p>If you have questions, please contact the lead researcher listed above. If you have questions about your rights as a research participant, you can contact the UCI Office of Research by phone, (949) 824-6662, by e-mail at IRB@research.uci.edu or at 141 Innovation Drive, Suite 250, Irvine, CA 92697. [VERIFY CONTACT DETAILS AGAINST THE CURRENT UCI TEMPLATE]</p><p>By selecting "I consent to participate" below, you confirm that you are 18 or older, have read this information, and agree to participate.</p></div>';
     var noConsentPage = '<div style="width:1000px;"> <p> Thank you!\n\nYou must consent to participate.</p></div>';
 
     var consent_question = {
@@ -572,6 +697,7 @@
   window.getPuzzleChatContext = function(){
     try {
       if (!currentPuzzle) return null;
+      if (CFG.ai_sees_problem === false) return null; // reproduce Grace's released behaviour
       return {
         id: currentPuzzle.id || null,
         problem: currentPuzzle.problem || null,
@@ -799,6 +925,23 @@
 
   function setupPuzzle(p, showSidebar){
     puzzleStartTime = Date.now();
+    onPuzzlePage = true;
+    resetIntegrity();
+    metacogShownThisPuzzle = false; metacogViewMs = null; startScreenShownThisPuzzle = false;
+    var puzzleEl = document.querySelector('.puzzle-container');
+    if (puzzleEl && CFG.block_copy_paste) puzzleEl.classList.add('no-select');
+    var phases = CFG.metacog_phases || ['initial'];
+    var showMetacog = metacogOn && phases.indexOf(p.type) !== -1;
+    // Neutral start screen: same extra click, no message, in no-message cells (same phases)
+    var showNeutral = !metacogOn && CFG.neutral_start_screen && phases.indexOf(p.type) !== -1;
+    if (showMetacog || showNeutral) {
+      showStartOverlay(showMetacog, function(viewed){
+        if (showMetacog) metacogShownThisPuzzle = true; else startScreenShownThisPuzzle = true;
+        metacogViewMs = viewed;
+        // the problem timer starts when the problem becomes visible
+        puzzleStartTime = Date.now();
+      });
+    }
     userSolved = false;
     puzzleGaveUp = false;
     puzzleSolvedCorrectly = false;
@@ -1052,6 +1195,12 @@
     data.alternate_answers = p.alternateAnswers || [];
     // Get chat logs specific to this puzzle
     data.chat_logs = allPuzzleChatLogs[p.id] || [];
+    // Metacognitive message and integrity measures
+    data.metacog_shown = metacogShownThisPuzzle;
+    data.neutral_start_shown = startScreenShownThisPuzzle;
+    data.start_screen_view_ms = metacogViewMs;
+    Object.assign(data, snapshotIntegrity());
+    onPuzzlePage = false;
   }
 
   /* ---------- GENERATE PUZZLE TRIALS ---------- */
@@ -1111,34 +1260,37 @@
   });
 
   /* ---------- CONDITION-SPECIFIC INSTRUCTION SCREEN ---------- */
-  if (participantNoAI) {
-    timeline.push({
+  timeline.push({
+    conditional_function: function(){ return participantNoAI === true; },
+    timeline: [{
       type: jsPsychInstructions,
       pages:[
         `<div style="width:1000px; text-align:left;">
           <p><b>You have been randomly assigned to the self-learning condition.</b> In this condition, we want you to work through the fraction problems on your own. You will have access to a reference panel with tips on how to solve fractions. We highly encourage you to use paper and pen, and take your time to work through the solutions.</p>
           <p>For some problems, the reference panel will not be available.</p>
           <p>Please don't use AI tools, Calculator, or Google to solve the problems.</p>
-          <p><b>Important:</b> Your payment does NOT depend on how many problems you answer correctly.</p>
+          <p><b>Important:</b> Your payment or course credit does NOT depend on how many problems you answer correctly.</p>
           <p>Please press next to continue.</p>
         </div>`
       ],
       show_clickable_nav:true
-    });
-  } else {
-    timeline.push({
+    }]
+  });
+  timeline.push({
+    conditional_function: function(){ return participantNoAI === false; },
+    timeline: [{
       type: jsPsychInstructions,
       pages:[
         `<div style="width:1000px; text-align:left;">
           <p><b>You have been randomly assigned to the AI-assisted learning condition.</b> In this condition, you will have access to an AI assistant (ChatGPT) to help you solve problems. We encourage you to use the AI to help you work through the problems. You can use the AI however you like -- feel free to ask it for hints, answers, or solutions.</p>
           <p>For some problems, ChatGPT won't be available. When ChatGPT isn't available, please don't use other AI tools, Calculator, or Google.</p>
-          <p><b>Important:</b> Your payment does NOT depend on how many problems you answer correctly.</p>
+          <p><b>Important:</b> Your payment or course credit does NOT depend on how many problems you answer correctly.</p>
           <p>Please press next to continue.</p>
         </div>`
       ],
       show_clickable_nav:true
-    });
-  }
+    }]
+  });
 
   // Add main puzzles (with AI for AI condition, with hints panel for control condition)
   mainPuzzles.forEach((p, index)=>{
@@ -1201,9 +1353,56 @@
   };
 
   // Only add AI usage survey for AI condition
-  if (!participantNoAI) {
-    timeline.push(aiUsageSurvey);
-  }
+  timeline.push({ conditional_function: function(){ return participantNoAI === false; }, timeline: [aiUsageSurvey] });
+
+  /* ---------- ADDED MEASURES (metacognitive-message study) ---------- */
+  // Learning-goal orientation during the problems (mechanism check, all cells)
+  timeline.push({
+    type: jsPsychSurveyLikert,
+    preamble: '<div style="width:1000px;"><p>Think about the problems you worked on in the main part of the study.</p></div>',
+    questions: [
+      { prompt: 'While working on the problems, how much were you trying to <b>learn how to solve</b> them, versus just trying to <b>get them done</b>?',
+        name: 'Learning_vs_Done', labels: ['1 Only trying to get them done','2','3','4','5','6','7 Only trying to learn'], required: true },
+      { prompt: 'How much effort did you put into solving the problems?',
+        name: 'Effort', labels: ['1 Very little','2','3','4','5','6','7 A great deal'], required: true }
+    ],
+    data: { stimulus_type: 'goal_survey' }
+  });
+
+  // Manipulation check (all cells; in no-message cells the correct answer is "nothing said")
+  timeline.push({
+    type: jsPsychSurveyMultiChoice,
+    questions: [{
+      prompt: 'Before each problem, what (if anything) did the study tell you the researchers cared about?',
+      name: 'Manipulation_Check',
+      options: [
+        'Getting as many answers correct as possible',
+        'Learning something by practicing the problems',
+        'Finishing as quickly as possible',
+        'Nothing was said about this before the problems',
+        'I don\'t remember'
+      ],
+      required: true
+    }],
+    data: { stimulus_type: 'manipulation_check' }
+  });
+
+  // Outside-tool self-report (all cells): addresses covert AI use, especially in the control cells
+  timeline.push({
+    type: jsPsychSurveyMultiChoice,
+    preamble: '<div style="width:900px; text-align:left; margin:0 auto;"><p><b>Please answer honestly.</b> ' +
+      'Your payment or course credit will <b>not</b> be affected in any way by your answers on this page. ' +
+      'Honest answers help us interpret the data correctly.</p></div>',
+    questions: [
+      { prompt: 'Did you use an AI tool <b>outside this page</b> (for example ChatGPT, Gemini, or Claude in another tab, app, or on your phone) while solving any of the problems?',
+        name: 'Outside_AI', options: ['No, never', 'Yes, on a few problems', 'Yes, on about half of the problems', 'Yes, on most or all problems'], required: true },
+      { prompt: 'Did you use a calculator or a web search while solving any of the problems?',
+        name: 'Outside_Calc_Search', options: ['No', 'Yes, a calculator', 'Yes, a web search', 'Yes, both'], required: true },
+      { prompt: 'Did you use paper and pen while solving the problems?',
+        name: 'Paper_Pen', options: ['No', 'Yes, on some problems', 'Yes, on most or all problems'], required: true }
+    ],
+    data: { stimulus_type: 'outside_tool_survey' }
+  });
 
   /* ---------- BOT CHECK ---------- */
   timeline.push({
@@ -1227,6 +1426,41 @@
     }
   });
 
-  jsPsych.run(timeline);
+  /* ---------- ASSIGN, THEN RUN ---------- */
+  function startExperiment(a){
+    participantNoAI = !!a.no_ai_condition;
+    metacogOn = !!a.metacog;
+    assignedCell = a.cell;
+    jsPsych.data.addProperties({
+      no_ai_condition: participantNoAI,          // same field as Grace's data
+      metacog_condition: metacogOn,
+      cell: assignedCell,
+      assignment_fallback: !!a.assignment_fallback,
+      start_number: a.starts,                    // >1 means the participant reloaded / restarted
+      participant_key: participantKey,
+      session_key: sessionKey,
+      recruitment_source: recruitmentSource,
+      prolific_pid: PROLIFIC_PID, prolific_study_id: urlParams.get('STUDY_ID'), prolific_session_id: urlParams.get('SESSION_ID'),
+      sona_id: SONA_ID,
+      study_version: CFG.study_version,
+      metacog_phases: (CFG.metacog_phases || []).join(','),
+      ai_sees_problem: CFG.ai_sees_problem !== false,
+      user_agent: navigator.userAgent,
+      screen_w: window.screen.width, screen_h: window.screen.height
+    });
+    jsPsych.run(timeline);
+  }
+  fetch('/assign', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                     body: JSON.stringify({ participant_key: participantKey, source: recruitmentSource }) })
+    .then(function(r){ return r.json(); })
+    .then(startExperiment)
+    .catch(function(){
+      // server unreachable: random assignment, flagged
+      var arms = (CFG.arms && CFG.arms.length) ? CFG.arms : ['ai','ai_metacog','control','control_metacog'];
+      var name = arms[Math.floor(Math.random()*arms.length)];
+      var c = { cell: name, no_ai_condition: name.indexOf('control') === 0, metacog: name.indexOf('metacog') !== -1 };
+      c.assignment_fallback = true; c.starts = null;
+      startExperiment(c);
+    });
 </script>
 </html>

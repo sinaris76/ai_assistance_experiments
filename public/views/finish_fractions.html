@@ -1,0 +1,40 @@
+<!doctype HTML>
+<html>
+    <head>
+        <link href="https://unpkg.com/jspsych@7.3.2/css/jspsych.css" rel="stylesheet" type="text/css" />
+        <link href="css/experiment.css" rel="stylesheet" type="text/css"></link>
+    </head>
+    <body>
+        <div class = "parent">
+            <div class = "child">
+                <div style="width:1000px; max-width:92vw; font-family: 'Open Sans', 'Arial', sans-serif; font-size: 18px; line-height: 1.6em; margin: 0 auto; text-align: left;">
+
+                    <h1>University of California, Irvine</h1>
+                    <p><b>Thank you for participating!</b></p>
+
+                    <% if (redirectUrl) { %>
+                    <p style="text-align:center; margin:28px 0;">
+                        <a href="<%= redirectUrl %>" class="jspsych-btn" style="text-decoration:none; font-size:20px; padding:12px 26px;"><%= label %></a>
+                    </p>
+                    <p style="font-size:15px; color:#666; text-align:center;">Please read the debriefing below, then click the button. You will be redirected automatically in 60 seconds.</p>
+                    <script>setTimeout(function(){ window.location.href = <%- JSON.stringify(redirectUrl) %>; }, 60000);</script>
+                    <% } else { %>
+                    <p>Your responses have been recorded. You may now close this window.</p>
+                    <% } %>
+
+                    <hr style="margin: 30px 0;">
+
+                    <p><b>Purpose of the study:</b> This study examined how access to an AI assistant while practicing fractions problems affects how well people solve similar problems afterwards without it, and how persistent they are. We also tested whether a short message before each practice problem, saying that the problem is a chance to practice and learn and that we care about learning rather than only correct answers, changes how people approach the problems and how much they learn. You were randomly assigned to have either an AI assistant or a reference panel during practice, and to see or not see that message.</p>
+
+                    <p><b>Why we didn't fully explain this beforehand:</b> Knowing what we were testing might have changed how you used the AI assistant or how you approached the final problems, which would have affected the validity of the results.</p>
+
+                    <p><b>What we measured:</b> Your accuracy, response times, persistence (skipping), how you used the AI assistant (if you had one), whether you switched away from the study page, and your answers to the questions at the end.</p>
+
+                    <p><b>Please do not share</b> the details of this study with others who might take part.</p>
+
+                    <p><b>Questions or concerns:</b> Please contact Sina Rismanchian at <a href="mailto:srismanc@uci.edu">srismanc@uci.edu</a>. [ADD/VERIFY IRB CONTACT TEXT FROM THE APPROVED PROTOCOL]</p>
+                </div>
+            </div>
+        </div>
+    </body>
+</html>

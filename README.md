@@ -1,3 +1,5 @@
+> **This fork (Sina Rismanchian, UC Irvine)** extends the fractions experiment with a per-problem metacognitive message crossed with the AI vs. control manipulation, plus Prolific/SONA integration and integrity logging. See **[METACOG_STUDY.md](METACOG_STUDY.md)** for the design, the list of changes, and how to run it. `npm start` now launches the fractions experiment; the reading experiment is unchanged (`npm run start:reading`).
+
 # Learning Experiment
 
 ## Experiments
