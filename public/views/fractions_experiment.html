@@ -1445,6 +1445,7 @@
       study_version: CFG.study_version,
       metacog_phases: (CFG.metacog_phases || []).join(','),
       ai_sees_problem: CFG.ai_sees_problem !== false,
+      chat_mode: CFG.chat_mode || 'openai',     // 'decoy' sessions are pilot data, not usable AI-condition data
       user_agent: navigator.userAgent,
       screen_w: window.screen.width, screen_h: window.screen.height
     });

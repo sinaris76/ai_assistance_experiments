@@ -49,8 +49,12 @@ const STUDY_CONFIG = {
   ai_sees_problem: (process.env.AI_SEES_PROBLEM || 'true') === 'true',
   // Show a content-free "Start problem" screen in the no-message cells, so the only
   // difference between message and no-message cells is the message itself.
-  neutral_start_screen: (process.env.NEUTRAL_START_SCREEN || 'false') === 'true'
+  neutral_start_screen: (process.env.NEUTRAL_START_SCREEN || 'false') === 'true',
+  // 'openai' = real model; 'decoy' = fixed placeholder reply, no OpenAI call (for piloting the flow)
+  chat_mode: (process.env.CHAT_MODE || 'openai').trim().toLowerCase() === 'decoy' ? 'decoy' : 'openai'
 };
+const DECOY_REPLY = process.env.DECOY_REPLY ||
+  "Thanks for your question! The AI assistant is in test mode right now, so this is a placeholder reply rather than real help with the problem.";
 
 // --- STORAGE: MongoDB if configured, otherwise local JSONL files -----------
 const connectionString = process.env.CONNECTION || process.env.MONGODB_URI;
@@ -198,6 +202,19 @@ app.post('/chat', async (req, res) => {
   try {
     const { message, conversationHistory = [], puzzleContext = null } = req.body;
 
+    if (STUDY_CONFIG.chat_mode === 'decoy') {
+      await new Promise(r => setTimeout(r, 800 + Math.random() * 700)); // feel like a real reply
+      return res.json({
+        success: true,
+        message: DECOY_REPLY,
+        conversationHistory: [
+          ...conversationHistory,
+          { role: "user", content: message },
+          { role: "assistant", content: DECOY_REPLY }
+        ]
+      });
+    }
+
     const messages = [
       {
         role: "system",
@@ -254,6 +271,6 @@ app.post('/chat', async (req, res) => {
 
 // --- START THE SERVER
 var server = app.listen(process.env.PORT || 3000, function(){
-    console.log("Listening on port %d | cells: %s | metacog phases: %s",
-      server.address().port, CELLS.join(', '), STUDY_CONFIG.metacog_phases.join(', '));
+    console.log("Listening on port %d | cells: %s | metacog phases: %s | chat: %s",
+      server.address().port, CELLS.join(', '), STUDY_CONFIG.metacog_phases.join(', '), STUDY_CONFIG.chat_mode);
 });
