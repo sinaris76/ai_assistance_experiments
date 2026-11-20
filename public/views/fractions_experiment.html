@@ -308,6 +308,7 @@
   // New tracking variables per requirements
   var puzzleGaveUp = false;              // whether user clicked Give Up (and had not already solved correctly)
   var puzzleSolvedCorrectly = false;     // whether the answer is correct
+  var puzzleUserAnswer = '';             // answer text captured at submit time (the form is cleared before on_finish runs)
 
   // Function to log chat messages for the current puzzle
   window.logChatMessage = function(messageObj) {
@@ -948,6 +949,7 @@
     puzzleGaveUp = false;
     puzzleSolvedCorrectly = false;
     puzzleCompletionTime = null;
+    puzzleUserAnswer = '';
     currentPuzzle = p;
 
     // Set current puzzle ID for chat logging
@@ -1098,6 +1100,7 @@
   function submitPuzzle(p){
     const answerInput = document.getElementById('answer-input');
     const userAnswer = answerInput.value.trim();
+    puzzleUserAnswer = userAnswer;
 
     const isCorrect = checkAnswer(userAnswer, p.answer, p.alternateAnswers);
     puzzleSolvedCorrectly = isCorrect;
@@ -1128,6 +1131,7 @@
   function onGiveUp(p){
     const answerInput = document.getElementById('answer-input');
     const userAnswer = answerInput.value.trim();
+    puzzleUserAnswer = userAnswer;
     const isPretest = p.type === 'pretest';
 
     // If user hasn't entered anything
@@ -1191,8 +1195,10 @@
     data.user_gave_up = puzzleGaveUp;
     data.user_solved_correctly = puzzleSolvedCorrectly;
     // Get user's answer
+    // Bug in the original code: the form is already cleared when on_finish runs, so reading the
+    // input here always gave ''. Use the value captured at submit / skip time instead.
     const answerInput = document.getElementById('answer-input');
-    data.user_answer = answerInput ? answerInput.value.trim() : '';
+    data.user_answer = puzzleUserAnswer || (answerInput ? answerInput.value.trim() : '');
     data.correct_answer = p.answer;
     data.alternate_answers = p.alternateAnswers || [];
     // Get chat logs specific to this puzzle
